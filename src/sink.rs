@@ -1,10 +1,11 @@
+use parking_lot::Mutex;
 use std::sync::atomic::Ordering;
 use std::sync::atomic::{AtomicBool, AtomicUsize};
 use std::sync::mpsc::Receiver;
 use std::sync::Arc;
-use std::sync::Mutex;
 use std::time::Duration;
 
+use destroy_stream;
 use play_raw;
 use queue;
 use source::Done;
@@ -18,7 +19,7 @@ use Source;
 /// playing.
 pub struct Sink {
     queue_tx: Arc<queue::SourcesQueueInput<f32>>,
-    sleep_until_end: Mutex<Option<Receiver<()>>>,
+    sleep_until_end: Arc<Mutex<Option<Receiver<()>>>>,
 
     controls: Arc<Controls>,
     sound_count: Arc<AtomicUsize>,
@@ -33,6 +34,39 @@ struct Controls {
 }
 
 impl Sink {
+    #[inline(always)]
+    pub fn new_oneshot<S>(device: &Device, source: S) -> (Self, Receiver<()>)
+    where
+        S: Source + Send + 'static,
+        S::Item: Sample,
+        S::Item: Send,
+    {
+        let (complete_tx, complete_rx) = std::sync::mpsc::channel();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let (queue_tx, queue_rx) = queue::queue_notify_empty(false, done_tx);
+        let (engine, stream_id) = play_raw(device, queue_rx);
+        let sink = Sink {
+            queue_tx: queue_tx,
+            sleep_until_end: Arc::new(Mutex::new(None)),
+            controls: Arc::new(Controls {
+                pause: AtomicBool::new(false),
+                volume: Mutex::new(1.0),
+                stopped: AtomicBool::new(false),
+            }),
+            sound_count: Arc::new(AtomicUsize::new(0)),
+            detached: false,
+        };
+        sink.append(source);
+        std::thread::spawn(move || {
+            if let Some(id) = stream_id {
+                let _ = done_rx.recv();
+                destroy_stream(&engine, id);
+                let _ = complete_tx.send(());
+            }
+        });
+        (sink, complete_rx)
+    }
+
     /// Builds a new `Sink`.
     #[inline]
     pub fn new(device: &Device) -> Sink {
@@ -41,7 +75,7 @@ impl Sink {
 
         Sink {
             queue_tx: queue_tx,
-            sleep_until_end: Mutex::new(None),
+            sleep_until_end: Arc::new(Mutex::new(None)),
             controls: Arc::new(Controls {
                 pause: AtomicBool::new(false),
                 volume: Mutex::new(1.0),
@@ -70,7 +104,7 @@ impl Sink {
                 if controls.stopped.load(Ordering::SeqCst) {
                     src.stop();
                 } else {
-                    src.inner_mut().set_factor(*controls.volume.lock().unwrap());
+                    src.inner_mut().set_factor(*controls.volume.lock());
                     src.inner_mut()
                         .inner_mut()
                         .set_paused(controls.pause.load(Ordering::SeqCst));
@@ -79,7 +113,7 @@ impl Sink {
             .convert_samples();
         self.sound_count.fetch_add(1, Ordering::Relaxed);
         let source = Done::new(source, self.sound_count.clone());
-        *self.sleep_until_end.lock().unwrap() = Some(self.queue_tx.append_with_signal(source));
+        *self.sleep_until_end.lock() = Some(self.queue_tx.append_with_signal(source));
     }
 
     /// Gets the volume of the sound.
@@ -88,7 +122,7 @@ impl Sink {
     /// multiply each sample by this value.
     #[inline]
     pub fn volume(&self) -> f32 {
-        *self.controls.volume.lock().unwrap()
+        *self.controls.volume.lock()
     }
 
     /// Changes the volume of the sound.
@@ -97,7 +131,7 @@ impl Sink {
     /// multiply each sample by this value.
     #[inline]
     pub fn set_volume(&self, value: f32) {
-        *self.controls.volume.lock().unwrap() = value;
+        *self.controls.volume.lock() = value;
     }
 
     /// Resumes playback of a paused sink.
@@ -140,7 +174,7 @@ impl Sink {
     /// Sleeps the current thread until the sound ends.
     #[inline]
     pub fn sleep_until_end(&self) {
-        if let Some(sleep_until_end) = self.sleep_until_end.lock().unwrap().take() {
+        if let Some(sleep_until_end) = self.sleep_until_end.lock().take() {
             let _ = sleep_until_end.recv();
         }
     }
@@ -155,6 +189,11 @@ impl Sink {
     #[inline]
     pub fn len(&self) -> usize {
         self.sound_count.load(Ordering::Relaxed)
+    }
+
+    #[inline]
+    pub fn listen_end(&self) -> Arc<Mutex<Option<Receiver<()>>>> {
+        Arc::clone(&self.sleep_until_end)
     }
 }
 

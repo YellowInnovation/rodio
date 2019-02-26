@@ -1,12 +1,12 @@
 //! Queue that plays sounds one after the other.
 
+use parking_lot::Mutex;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::sync::mpsc;
 use std::sync::mpsc::Receiver;
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
-use std::sync::Mutex;
 use std::time::Duration;
 
 use source::Empty;
@@ -37,6 +37,54 @@ where
 
     let output = SourcesQueueOutput {
         current: Box::new(Empty::<S>::new()) as Box<_>,
+        pristine: true,
+        signal_after_end: None,
+        signal_on_queue_empty: None,
+        input: input.clone(),
+    };
+
+    (input, output)
+}
+
+pub fn queue_listen<S>(
+    keep_alive_if_empty: bool,
+    signal_after_end: Sender<()>,
+) -> (Arc<SourcesQueueInput<S>>, SourcesQueueOutput<S>)
+where
+    S: Sample + Send + 'static,
+{
+    let input = Arc::new(SourcesQueueInput {
+        next_sounds: Mutex::new(Vec::new()),
+        keep_alive_if_empty: AtomicBool::new(keep_alive_if_empty),
+    });
+
+    let output = SourcesQueueOutput {
+        current: Box::new(Empty::<S>::new()) as Box<_>,
+        pristine: true,
+        signal_on_queue_empty: None,
+        signal_after_end: Some(signal_after_end),
+        input: input.clone(),
+    };
+
+    (input, output)
+}
+
+pub fn queue_notify_empty<S>(
+    keep_alive_if_empty: bool,
+    signal_on_queue_empty: Sender<()>,
+) -> (Arc<SourcesQueueInput<S>>, SourcesQueueOutput<S>)
+where
+    S: Sample + Send + 'static,
+{
+    let input = Arc::new(SourcesQueueInput {
+        next_sounds: Mutex::new(Vec::new()),
+        keep_alive_if_empty: AtomicBool::new(keep_alive_if_empty),
+    });
+
+    let output = SourcesQueueOutput {
+        current: Box::new(Empty::<S>::new()) as Box<_>,
+        pristine: true,
+        signal_on_queue_empty: Some(signal_on_queue_empty),
         signal_after_end: None,
         input: input.clone(),
     };
@@ -66,7 +114,6 @@ where
     {
         self.next_sounds
             .lock()
-            .unwrap()
             .push((Box::new(source) as Box<_>, None));
     }
 
@@ -81,7 +128,6 @@ where
         let (tx, rx) = mpsc::channel();
         self.next_sounds
             .lock()
-            .unwrap()
             .push((Box::new(source) as Box<_>, Some(tx)));
         rx
     }
@@ -99,6 +145,12 @@ where
 pub struct SourcesQueueOutput<S> {
     // The current iterator that produces samples.
     current: Box<Source<Item = S> + Send>,
+
+    // True if no source has ever been appeneded
+    pristine: bool,
+
+    // Signal the sender the queue is empty.
+    signal_on_queue_empty: Option<Sender<()>>,
 
     // Signal this sender before picking from `next`.
     signal_after_end: Option<Sender<()>>,
@@ -170,12 +222,18 @@ where
         loop {
             // Basic situation that will happen most of the time.
             if let Some(sample) = self.current.next() {
+                self.pristine = false;
                 return Some(sample);
             }
 
             // Since `self.current` has finished, we need to pick the next sound.
             // In order to avoid inlining this expensive operation, the code is in another function.
             if self.go_next().is_err() {
+                if !self.pristine {
+                    if let Some(signal_on_queue_empty) = self.signal_on_queue_empty.take() {
+                        let _ = signal_on_queue_empty.send(());
+                    }
+                }
                 return None;
             }
         }
@@ -201,7 +259,7 @@ where
         }
 
         let (next, signal_after_end) = {
-            let mut next = self.input.next_sounds.lock().unwrap();
+            let mut next = self.input.next_sounds.lock();
 
             if next.len() == 0 {
                 if self.input.keep_alive_if_empty.load(Ordering::Acquire) {
@@ -270,7 +328,7 @@ mod tests {
         assert_eq!(rx.next(), Some(10));
         assert_eq!(rx.next(), Some(-10));
 
-        for _ in 0 .. 100000 {
+        for _ in 0..100000 {
             assert_eq!(rx.next(), Some(0));
         }
     }
@@ -280,7 +338,7 @@ mod tests {
     fn no_delay_when_added() {
         let (tx, mut rx) = queue::queue(true);
 
-        for _ in 0 .. 500 {
+        for _ in 0..500 {
             assert_eq!(rx.next(), Some(0));
         }
 

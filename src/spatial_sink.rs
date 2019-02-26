@@ -1,7 +1,8 @@
+use parking_lot::Mutex;
 use source::Spatial;
 use std::f32;
 use std::fmt::Debug;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 use Device;
 use Sample;
@@ -23,7 +24,10 @@ impl SpatialSink {
     /// Builds a new `SpatialSink`.
     #[inline]
     pub fn new(
-        device: &Device, emitter_position: [f32; 3], left_ear: [f32; 3], right_ear: [f32; 3],
+        device: &Device,
+        emitter_position: [f32; 3],
+        left_ear: [f32; 3],
+        right_ear: [f32; 3],
     ) -> SpatialSink {
         SpatialSink {
             sink: Sink::new(device),
@@ -37,17 +41,17 @@ impl SpatialSink {
 
     /// Sets the position of the sound emitter in 3 dimensional space.
     pub fn set_emitter_position(&self, pos: [f32; 3]) {
-        self.positions.lock().unwrap().emitter_position = pos;
+        self.positions.lock().emitter_position = pos;
     }
 
     /// Sets the position of the left ear in 3 dimensional space.
     pub fn set_left_ear_position(&self, pos: [f32; 3]) {
-        self.positions.lock().unwrap().left_ear = pos;
+        self.positions.lock().left_ear = pos;
     }
 
     /// Sets the position of the right ear in 3 dimensional space.
     pub fn set_right_ear_position(&self, pos: [f32; 3]) {
-        self.positions.lock().unwrap().right_ear = pos;
+        self.positions.lock().right_ear = pos;
     }
 
     /// Appends a sound to the queue of sounds to play.
@@ -58,14 +62,15 @@ impl SpatialSink {
         S::Item: Sample + Send + Debug,
     {
         let positions = self.positions.clone();
-        let pos_lock = self.positions.lock().unwrap();
+        let pos_lock = self.positions.lock();
         let source = Spatial::new(
             source,
             pos_lock.emitter_position,
             pos_lock.left_ear,
             pos_lock.right_ear,
-        ).periodic_access(Duration::from_millis(10), move |i| {
-            let pos = positions.lock().unwrap();
+        )
+        .periodic_access(Duration::from_millis(10), move |i| {
+            let pos = positions.lock();
             i.set_positions(pos.emitter_position, pos.left_ear, pos.right_ear);
         });
         self.sink.append(source);

@@ -36,7 +36,9 @@ where
 {
     #[inline]
     pub fn new(
-        input: I, target_channels: u16, target_sample_rate: u32,
+        input: I,
+        target_channels: u16,
+        target_sample_rate: u32,
     ) -> UniformSourceIterator<I, D> {
         let total_duration = input.total_duration();
         let input = UniformSourceIterator::bootstrap(input, target_channels, target_sample_rate);
@@ -51,7 +53,9 @@ where
 
     #[inline]
     fn bootstrap(
-        input: I, target_channels: u16, target_sample_rate: u32,
+        input: I,
+        target_channels: u16,
+        target_sample_rate: u32,
     ) -> DataConverter<ChannelCountConverter<SampleRateConverter<Take<I>>>, D> {
         let frame_len = input.current_frame_len();
 
@@ -89,7 +93,8 @@ where
             return Some(value);
         }
 
-        let input = self.inner
+        let input = self
+            .inner
             .take()
             .unwrap()
             .into_inner()
@@ -154,7 +159,7 @@ where
     fn next(&mut self) -> Option<<I as Iterator>::Item> {
         if let Some(ref mut n) = self.n {
             if *n != 0 {
-                *n -= 1;
+                *n = n.saturating_sub(1);
                 self.iter.next()
             } else {
                 None
@@ -183,8 +188,4 @@ where
     }
 }
 
-impl<I> ExactSizeIterator for Take<I>
-where
-    I: ExactSizeIterator,
-{
-}
+impl<I> ExactSizeIterator for Take<I> where I: ExactSizeIterator {}

@@ -63,7 +63,6 @@ where
     }
 }
 
-
 impl<I, F> Iterator for PeriodicAccess<I, F>
 where
     I: Source,
@@ -74,7 +73,7 @@ where
 
     #[inline]
     fn next(&mut self) -> Option<I::Item> {
-        self.samples_until_update -= 1;
+        self.samples_until_update = self.samples_until_update.saturating_sub(1);
         if self.samples_until_update == 0 {
             (self.modifier)(&mut self.input);
             self.samples_until_update = self.update_frequency;
