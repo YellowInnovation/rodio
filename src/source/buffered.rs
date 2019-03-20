@@ -1,5 +1,6 @@
+use parking_lot::Mutex;
 use std::cmp;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 use Sample;
@@ -106,7 +107,7 @@ where
     fn next_frame(&mut self) {
         let next_frame = {
             let mut next_frame_ptr = match &*self.current_frame {
-                &Frame::Data(FrameData { ref next, .. }) => next.lock().unwrap(),
+                &Frame::Data(FrameData { ref next, .. }) => next.lock(),
                 _ => unreachable!(),
             };
 
@@ -114,9 +115,9 @@ where
                 &Frame::Data(_) => next_frame_ptr.clone(),
                 &Frame::End => next_frame_ptr.clone(),
                 &Frame::Input(ref input) => {
-                    let input = input.lock().unwrap().take().unwrap();
+                    let input = input.lock().take().unwrap();
                     extract(input)
-                },
+                }
             };
 
             *next_frame_ptr = next_frame.clone();
@@ -145,12 +146,12 @@ where
                 current_sample = Some(data[self.position_in_frame].clone());
                 self.position_in_frame += 1;
                 advance_frame = self.position_in_frame >= data.len();
-            },
+            }
 
             &Frame::End => {
                 current_sample = None;
                 advance_frame = false;
-            },
+            }
 
             &Frame::Input(_) => unreachable!(),
         };

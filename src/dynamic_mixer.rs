@@ -1,9 +1,9 @@
 //! Mixer that plays multiple sounds at the same time.
 
+use parking_lot::Mutex;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
-use std::sync::Mutex;
 use std::time::Duration;
 
 use source::Source;
@@ -18,7 +18,8 @@ use Sample;
 ///
 /// After creating a mixer, you can add new sounds with the controller.
 pub fn mixer<S>(
-    channels: u16, sample_rate: u32,
+    channels: u16,
+    sample_rate: u32,
 ) -> (Arc<DynamicMixerController<S>>, DynamicMixer<S>)
 where
     S: Sample + Send + 'static,
@@ -59,7 +60,6 @@ where
         let uniform_source = UniformSourceIterator::new(source, self.channels, self.sample_rate);
         self.pending_sources
             .lock()
-            .unwrap()
             .push(Box::new(uniform_source) as Box<_>);
         self.has_pending.store(true, Ordering::SeqCst); // TODO: can we relax this ordering?
     }
@@ -108,14 +108,9 @@ where
     #[inline]
     fn next(&mut self) -> Option<S> {
         if self.input.has_pending.load(Ordering::SeqCst) {
-            // TODO: relax ordering?
-            let mut pending = self.input.pending_sources.lock().unwrap();
+            let mut pending = self.input.pending_sources.lock();
             self.current_sources.extend(pending.drain(..));
-            self.input.has_pending.store(false, Ordering::SeqCst); // TODO: relax ordering?
-        }
-
-        if self.current_sources.is_empty() {
-            return None;
+            self.input.has_pending.store(false, Ordering::SeqCst);
         }
 
         let mut to_drop = Vec::new();

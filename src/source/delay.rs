@@ -61,7 +61,7 @@ where
     #[inline]
     fn next(&mut self) -> Option<<I as Iterator>::Item> {
         if self.remaining_samples >= 1 {
-            self.remaining_samples -= 1;
+            self.remaining_samples = self.remaining_samples.saturating_sub(1);
             Some(Sample::zero_value())
         } else {
             self.input.next()
