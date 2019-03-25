@@ -17,13 +17,13 @@ cgmath = "0.17"
 lazy_static = "1.0.0"
 parking_lot = "0.7.1"
 
+[dependencies.cpal]
+branch = "mra-tests"
+git = "https://github.com/YellowInnovation/cpal"
+
 [dependencies.claxon]
 optional = true
 version = "0.4.1"
-
-[dependencies.cpal]
-branch = "master"
-git = "https://github.com/YellowInnovation/cpal"
 
 [dependencies.hound]
 optional = true
