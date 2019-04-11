@@ -1,3 +1,4 @@
+use std::sync::mpsc::Sender;
 use parking_lot::Mutex;
 use std::sync::atomic::Ordering;
 use std::sync::atomic::{AtomicBool, AtomicUsize};
@@ -9,6 +10,7 @@ use destroy_stream;
 use play_raw;
 use queue;
 use source::Done;
+use engine::Engine;
 use Device;
 use Sample;
 use Source;
@@ -20,11 +22,11 @@ use Source;
 pub struct Sink {
     queue_tx: Arc<queue::SourcesQueueInput<f32>>,
     sleep_until_end: Arc<Mutex<Option<Receiver<()>>>>,
-
     controls: Arc<Controls>,
     sound_count: Arc<AtomicUsize>,
-
     detached: bool,
+    engine: Arc<Engine>,
+    stream_id: Option<cpal::StreamId>
 }
 
 struct Controls {
@@ -34,44 +36,11 @@ struct Controls {
 }
 
 impl Sink {
-    #[inline(always)]
-    pub fn new_oneshot<S>(device: &Device, source: S) -> (Self, Receiver<()>)
-    where
-        S: Source + Send + 'static,
-        S::Item: Sample,
-        S::Item: Send,
-    {
-        let (complete_tx, complete_rx) = std::sync::mpsc::channel();
-        let (done_tx, done_rx) = std::sync::mpsc::channel();
-        let (queue_tx, queue_rx) = queue::queue_notify_empty(false, done_tx);
-        let (engine, stream_id) = play_raw(device, queue_rx);
-        let sink = Sink {
-            queue_tx: queue_tx,
-            sleep_until_end: Arc::new(Mutex::new(None)),
-            controls: Arc::new(Controls {
-                pause: AtomicBool::new(false),
-                volume: Mutex::new(1.0),
-                stopped: AtomicBool::new(false),
-            }),
-            sound_count: Arc::new(AtomicUsize::new(0)),
-            detached: false,
-        };
-        sink.append(source);
-        std::thread::spawn(move || {
-            if let Some(id) = stream_id {
-                let _ = done_rx.recv();
-                destroy_stream(&engine, id);
-                let _ = complete_tx.send(());
-            }
-        });
-        (sink, complete_rx)
-    }
-
     /// Builds a new `Sink`.
     #[inline]
     pub fn new(device: &Device) -> Sink {
         let (queue_tx, queue_rx) = queue::queue(true);
-        play_raw(device, queue_rx);
+        let (engine, stream_id) = play_raw(device, queue_rx);
 
         Sink {
             queue_tx: queue_tx,
@@ -83,6 +52,8 @@ impl Sink {
             }),
             sound_count: Arc::new(AtomicUsize::new(0)),
             detached: false,
+            engine,
+            stream_id
         }
     }
 
@@ -201,9 +172,11 @@ impl Drop for Sink {
     #[inline]
     fn drop(&mut self) {
         self.queue_tx.set_keep_alive_if_empty(false);
-
         if !self.detached {
             self.controls.stopped.store(true, Ordering::Relaxed);
+            if let Some(id) = &self.stream_id {
+                destroy_stream(&self.engine, id.clone());
+            }
         }
     }
 }

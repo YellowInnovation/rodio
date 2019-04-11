@@ -69,29 +69,6 @@ where
     (input, output)
 }
 
-pub fn queue_notify_empty<S>(
-    keep_alive_if_empty: bool,
-    signal_on_queue_empty: Sender<()>,
-) -> (Arc<SourcesQueueInput<S>>, SourcesQueueOutput<S>)
-where
-    S: Sample + Send + 'static,
-{
-    let input = Arc::new(SourcesQueueInput {
-        next_sounds: Mutex::new(Vec::new()),
-        keep_alive_if_empty: AtomicBool::new(keep_alive_if_empty),
-    });
-
-    let output = SourcesQueueOutput {
-        current: Box::new(Empty::<S>::new()) as Box<_>,
-        pristine: true,
-        signal_on_queue_empty: Some(signal_on_queue_empty),
-        signal_after_end: None,
-        input: input.clone(),
-    };
-
-    (input, output)
-}
-
 // TODO: consider reimplementing this with `from_factory`
 
 /// The input of the queue.
