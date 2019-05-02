@@ -22,7 +22,9 @@ optional = true
 version = "0.4.1"
 
 [dependencies.cpal]
+# path = "../cpal"
 git = "https://github.com/YellowInnovation/cpal"
+branch = "buffer_tweaks"
 
 [dependencies.hound]
 optional = true
